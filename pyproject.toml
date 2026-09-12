@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flower"
+version = "0.1.0"
+description = "Raspberry Pi plant watering, lighting, and environmental-sensing controller"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jan Kloppenburg", email = "jank@numphys.org" }]
+keywords = ["raspberry-pi", "gpio", "irrigation", "automation", "gardening"]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+# Installed on the Pi itself. Kept optional so the package imports, tests, and
+# runs in dry-run mode on a dev machine with none of the hardware present.
+hardware = ["gpiozero>=2.0", "lgpio>=0.2", "pyserial>=3.5", "bme280pi>=1.0"]
+camera = ["picamera2>=0.3"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
+
+[project.scripts]
+flower = "flower.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flower"]
+
+[tool.ruff]
+line-length = 100
