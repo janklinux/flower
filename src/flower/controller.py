@@ -11,11 +11,16 @@ store and relay classes and expresses the three behaviours generically:
 
 With the default config (all pins ``None``) every actuation is a logged dry run,
 so ``Controller(Config.default()).run()`` is safe to start with nothing wired.
+
+It is also thread-safe: :meth:`snapshot`, :meth:`apply_settings` and
+:meth:`timeseries` take a lock shared with :meth:`step`, so the HTTP API
+(``flower.server``) can read status and push commands while the loop runs.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from .config import Config
@@ -79,52 +84,55 @@ class Controller:
                        for t in self.config.timed_actions if t.relay in self.bank}
         self._timed_relays = {t.relay for t in self.config.timed_actions}
 
+        self._lock = threading.RLock()   # guards store/relay state (loop vs API)
+        self._stop = threading.Event()
+
     # -- one iteration --------------------------------------------------------
     def step(self) -> dict:
         """Run a single sense/decide/actuate cycle; return a status snapshot."""
         snapshot: dict = {"time": time.time()}
 
+        # Sensor reads are slow (I2C, serial timeouts) -> do them OUTSIDE the
+        # lock so API status requests aren't blocked while we poll hardware.
         room = self.bme.read()
-        if room:
-            self.room.append_many(room)
-            snapshot["room"] = room
-
         reading = self.hub.read()
-        if reading:
-            for i, val in enumerate(reading.moisture):
-                self.moisture.append(str(i), val)
-            if reading.humidity is not None:
-                self.rht.append("humidity", reading.humidity)
-            if reading.temperature is not None:
-                self.rht.append("temperature", reading.temperature)
-            if reading.pressure is not None:
-                self.rht.append("pressure", reading.pressure)
-            snapshot["moisture"] = reading.moisture
-            snapshot["rht"] = {"humidity": reading.humidity,
-                               "temperature": reading.temperature,
-                               "pressure": reading.pressure}
-
         cpu = read_cpu_temperature()
-        if cpu is not None:
-            self.rht.append("cpu", cpu)
-            snapshot["cpu"] = cpu
 
-        settings = self.settings.load()
+        with self._lock:
+            if room:
+                self.room.append_many(room)
+                snapshot["room"] = room
+            if reading:
+                for i, val in enumerate(reading.moisture):
+                    self.moisture.append(str(i), val)
+                if reading.humidity is not None:
+                    self.rht.append("humidity", reading.humidity)
+                if reading.temperature is not None:
+                    self.rht.append("temperature", reading.temperature)
+                if reading.pressure is not None:
+                    self.rht.append("pressure", reading.pressure)
+                snapshot["moisture"] = reading.moisture
+                snapshot["rht"] = {"humidity": reading.humidity,
+                                   "temperature": reading.temperature,
+                                   "pressure": reading.pressure}
+            if cpu is not None:
+                self.rht.append("cpu", cpu)
+                snapshot["cpu"] = cpu
 
-        if settings.get("reset"):
-            self.moisture.reset()
-            settings["reset"] = False
+            settings = self.settings.load()
+            if settings.get("reset"):
+                self.moisture.reset()
+                settings["reset"] = False
 
-        self._apply_direct_flags(settings)
-        self._apply_auto_heat(settings)
-        self._apply_timed_actions(settings)
+            self._apply_direct_flags(settings)
+            self._apply_auto_heat(settings)
+            self._apply_timed_actions(settings)
+            snapshot["relays"] = self.bank.state()
 
-        snapshot["relays"] = self.bank.state()
-
-        self.settings.write(settings)
-        self.moisture.save()
-        self.rht.save()
-        self.room.save()
+            self.settings.write(settings)
+            self.moisture.save()
+            self.rht.save()
+            self.room.save()
         return snapshot
 
     # -- behaviours -----------------------------------------------------------
@@ -157,21 +165,55 @@ class Controller:
                 settings[key] = False           # consume the one-shot command
             action.update()
 
+    # -- read/command API (thread-safe; used by flower.server) ----------------
+    def apply_settings(self) -> None:
+        """Apply the current settings/command flags now (for instant response to
+        an API command, without waiting for the next loop step)."""
+        with self._lock:
+            settings = self.settings.load()
+            self._apply_direct_flags(settings)
+            self._apply_auto_heat(settings)
+            self._apply_timed_actions(settings)
+            self.settings.write(settings)
+
+    def snapshot(self) -> dict:
+        """Live status: relay states + latest sensor values + settings."""
+        with self._lock:
+            return {
+                "time": time.time(),
+                "relays": self.bank.state(),
+                "moisture": {c: self.moisture.latest(c) for c in self.moisture.channels},
+                "rht": {c: self.rht.latest(c) for c in self.rht.channels},
+                "room": {c: self.room.latest(c) for c in self.room.channels},
+                "settings": self.settings.load(),
+            }
+
+    def timeseries(self, name: str, n: int = 200) -> dict | None:
+        """Last ``n`` samples per channel for a store (moisture/rht/room)."""
+        store = {"moisture": self.moisture, "rht": self.rht, "room": self.room}.get(name)
+        if store is None:
+            return None
+        with self._lock:
+            return {c: (store.data.get(c) or [])[-n:] for c in store.channels}
+
     # -- lifecycle ------------------------------------------------------------
     def run(self, once: bool = False) -> None:
-        """Loop forever (or a single step) at ``sample_interval_s`` spacing."""
+        """Loop at ``sample_interval_s`` spacing until :meth:`stop` (or once)."""
         interval = self.config.sample_interval_s
         log.info("flower controller starting (interval=%ss, dry-run pins left unassigned)", interval)
         try:
-            while True:
+            while not self._stop.is_set():
                 self.step()
                 if once:
                     return
-                time.sleep(interval)
+                self._stop.wait(interval)       # interruptible sleep
         except KeyboardInterrupt:               # pragma: no cover
             log.info("interrupted")
         finally:
             self.shutdown()
+
+    def stop(self) -> None:
+        self._stop.set()
 
     def shutdown(self) -> None:
         """Fail-closed: de-energise everything and release the hardware."""

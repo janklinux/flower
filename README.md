@@ -40,6 +40,33 @@ flower status --config config.yaml   # one sense/actuate cycle, printed
 flower run    --config config.yaml   # the loop
 flower set water true            # drop a one-shot command (runs the pump timed)
 flower get                       # inspect the command/settings file
+flower serve --token <tok>       # controller loop + HTTP API (for the phone app)
+```
+
+## HTTP API (`flower serve`)
+
+`flower serve` runs the controller loop **and** a small stdlib HTTP API (no
+extra deps) so the `admin_flower` phone app (or `curl`) can read status and push
+commands. Auth is a shared bearer token (`--token`, `FLOWER_API_TOKEN`, or
+`api.token` in config; a throwaway one is generated and printed if unset).
+Cleartext — meant for a trusted LAN (add TLS / an SSH tunnel otherwise).
+
+| Method | Path | Body / result |
+|---|---|---|
+| GET  | `/api/status`            | live snapshot: relays + latest sensor values + settings |
+| GET  | `/api/settings`          | the settings/command flag file |
+| GET  | `/api/timeseries/<store>`| `?n=` recent samples per channel (moisture/rht/room) |
+| POST | `/api/settings/<key>`    | `{"value": …}` — set a flag |
+| POST | `/api/relay/<name>`      | `{"on": bool}` — hold a direct relay |
+| POST | `/api/command/<key>`     | trigger a one-shot (water/fill/…) |
+
+Commands are applied immediately (not just on the next loop tick) and persisted
+through `SettingsStore`, so the loop stays the single source of truth.
+
+```bash
+flower serve --host 0.0.0.0 --port 8080 --token s3cret
+curl -H "Authorization: Bearer s3cret" http://<pi>:8080/api/status
+curl -X POST -H "Authorization: Bearer s3cret" -d '{"on":true}' http://<pi>:8080/api/relay/plug
 ```
 
 ## Configuration
@@ -81,7 +108,8 @@ moisture + BME280 → serial line); `firmware/i2c_scanner.ino` is a bus-scan hel
 
 ## Status / scope
 
-v0.1 covers the control core (sensors, relays, stores, controller, CLI). Camera
+v0.1 covers the control core (sensors, relays, stores, controller, CLI) and the
+HTTP control API (`flower serve`) for the `admin_flower` phone app. Camera
 capture/stream, the MongoDB (`mongo.numphys.org`) logging, and the numphys
 settings-sync from the prototype are **not** ported yet — parked until the core
 loop is running on real hardware (see `manager/README.md` phases). Pins stay

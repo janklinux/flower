@@ -16,7 +16,8 @@ package and running the controller works with *nothing* connected: unassigned
 pins and absent libraries degrade to a logged dry-run instead of raising.
 """
 
-from .config import ArduinoConfig, BME280Config, Config, RelayConfig, TimedActionConfig
+from .config import (ApiConfig, ArduinoConfig, BME280Config, Config, RelayConfig,
+                     TimedActionConfig)
 from .actuators.relay import Relay, RelayBank
 from .sensors.arduino import ArduinoSensorHub, SensorReading
 from .sensors.bme280 import BME280Sensor
@@ -24,6 +25,7 @@ from .sensors.cpu import read_cpu_temperature
 from .store.settings import SettingsStore
 from .store.timeseries import TimeSeriesStore
 from .controller import Controller
+from .server import ApiServer, serve
 
 __version__ = "0.1.0"
 
@@ -42,5 +44,8 @@ __all__ = [
     "TimeSeriesStore",
     "SettingsStore",
     "Controller",
+    "ApiConfig",
+    "ApiServer",
+    "serve",
     "__version__",
 ]

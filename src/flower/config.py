@@ -73,6 +73,20 @@ class TimedActionConfig:
 
 
 @dataclass
+class ApiConfig:
+    """HTTP control API (served by ``flower serve`` / ``flower.server``).
+
+    Cleartext on a trusted LAN. ``token`` is the shared bearer token the phone
+    app sends; None here means take it from ``FLOWER_API_TOKEN`` or generate a
+    throwaway one at serve time."""
+
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8080
+    token: str | None = None
+
+
+@dataclass
 class Config:
     """Full rig configuration."""
 
@@ -87,6 +101,7 @@ class Config:
         default_factory=lambda: [RelayConfig(name=n, description=d) for n, d in DEFAULT_RELAYS]
     )
     timed_actions: list[TimedActionConfig] = field(default_factory=list)
+    api: ApiConfig = field(default_factory=ApiConfig)
 
     @property
     def retention_points(self) -> int:
@@ -116,6 +131,8 @@ class Config:
                 {"key": t.key, "relay": t.relay, "duration_s": t.duration_s}
                 for t in self.timed_actions
             ],
+            "api": {"enabled": self.api.enabled, "host": self.api.host,
+                    "port": self.api.port, "token": self.api.token},
         }
 
     @classmethod
@@ -141,6 +158,10 @@ class Config:
             timed_actions=[TimedActionConfig(key=t["key"], relay=t["relay"],
                                              duration_s=float(t["duration_s"]))
                            for t in (d.get("timed_actions") or [])],
+            api=ApiConfig(enabled=bool((d.get("api") or {}).get("enabled", False)),
+                          host=(d.get("api") or {}).get("host", "0.0.0.0"),
+                          port=int((d.get("api") or {}).get("port", 8080)),
+                          token=(d.get("api") or {}).get("token")),
         )
 
     @classmethod

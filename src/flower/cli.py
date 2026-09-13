@@ -50,6 +50,11 @@ def main(argv=None) -> int:
     sub.add_parser("status", help="one sense/actuate step, print a snapshot")
     sub.add_parser("relays", help="list configured relay channels")
 
+    p_serve = sub.add_parser("serve", help="run the controller loop + HTTP control API")
+    p_serve.add_argument("--host", help="bind address (default from config)")
+    p_serve.add_argument("--port", type=int, help="bind port (default from config)")
+    p_serve.add_argument("--token", help="API bearer token (else FLOWER_API_TOKEN, else generated)")
+
     p_init = sub.add_parser("init-config", help="write a default config file")
     p_init.add_argument("path", help="output YAML path")
 
@@ -73,6 +78,32 @@ def main(argv=None) -> int:
 
     if args.cmd == "run":
         Controller(cfg).run()
+        return 0
+
+    if args.cmd == "serve":
+        import os
+        import secrets
+        import threading
+        from .server import serve
+
+        host = args.host or cfg.api.host
+        port = args.port or cfg.api.port
+        token = args.token or os.environ.get("FLOWER_API_TOKEN") or cfg.api.token
+        if not token:
+            token = secrets.token_urlsafe(18)
+            print(f"No API token configured — generated one for this run:\n  {token}\n"
+                  "  (put it in config `api.token` or FLOWER_API_TOKEN to keep it stable,\n"
+                  "   and paste it into the admin_flower app)")
+        controller = Controller(cfg)
+        threading.Thread(target=controller.run, daemon=True).start()
+        print(f"flower serving on http://{host}:{port}  (Ctrl+C to stop)")
+        try:
+            serve(controller, host, port, token)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            controller.stop()
+            controller.shutdown()
         return 0
 
     if args.cmd == "status":
