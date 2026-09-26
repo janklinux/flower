@@ -23,13 +23,33 @@ edges:
 ## Install
 
 ```bash
-pip install -e .                 # core (dev machine, dry-run)
-pip install -e '.[hardware]'     # on the Pi: gpiozero+lgpio, pyserial, bme280pi
+pip install -e .                 # gpiozero, pyserial, bme280pi come by default
 pip install -e '.[dev]' && pytest
 ```
 
-Everything imports and runs **without hardware**: unassigned pins and absent
-libraries degrade to a logged dry-run, so you can develop and test off the Pi.
+`gpiozero`, `pyserial` and `bme280pi` install by default (they have wheels and
+import cleanly off the Pi). Everything still runs **without hardware**:
+unassigned pins and an absent GPIO backend degrade to a logged dry-run, so you
+can develop and test off the Pi.
+
+### Raspberry Pi setup
+
+`gpiozero` needs a GPIO backend on the Pi 5: **`lgpio`**. It ships no wheel for
+current Python on aarch64 and won't compile in a plain venv (`pip install lgpio`
+fails), so it is **not** a default dependency. Install it from apt and give the
+venv access to the system site-packages so it's visible:
+
+```bash
+sudo apt install -y python3-lgpio python3-gpiozero   # backend + gpiozero from apt
+python3 -m venv --system-site-packages ~/venv        # <-- the --system flag matters
+~/venv/bin/pip install -e .
+~/venv/bin/python -c "from gpiozero import Device; Device.ensure_pin_factory(); print(type(Device.pin_factory).__name__)"
+# -> LGPIOFactory  (if this prints and no error, GPIO will actually switch)
+```
+
+Without `--system-site-packages` the venv can't see the apt `lgpio`, `gpiozero`
+silently has no backend, and `flower` degrades to a dry-run (relays "do nothing").
+Check wiring with `python tests/relay_wiring_check.py`.
 
 ## Use
 

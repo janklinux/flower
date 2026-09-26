@@ -11,12 +11,28 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Jan Kloppenburg", email = "jank@numphys.org" }]
 keywords = ["raspberry-pi", "gpio", "irrigation", "automation", "gardening"]
-dependencies = ["PyYAML>=6.0"]
+dependencies = [
+    "PyYAML>=6.0",
+    # Hardware libraries, installed by default. They import cleanly on a non-Pi
+    # dev machine and the controller just stays in dry-run there (relay pins
+    # default to None, so no GPIO backend is touched), so shipping them by
+    # default does not break off-Pi use or the test suite.
+    "gpiozero>=2.0",
+    "pyserial>=3.5",
+    "bme280pi>=1.0",
+]
 
 [project.optional-dependencies]
-# Installed on the Pi itself. Kept optional so the package imports, tests, and
-# runs in dry-run mode on a dev machine with none of the hardware present.
-hardware = ["gpiozero>=2.0", "lgpio>=0.2", "pyserial>=3.5", "bme280pi>=1.0"]
+# lgpio is gpiozero's GPIO backend on the Raspberry Pi 5. It has NO wheel for
+# current Python on aarch64 and will not compile in a plain venv, so it is
+# deliberately NOT a default dependency -- adding it there breaks `pip install`
+# anywhere it can't build (dev machines, and the Pi itself on new Python). On the
+# Pi, install it from apt and expose it to the venv (see README "Raspberry Pi
+# setup"):
+#     sudo apt install python3-lgpio python3-gpiozero
+#     python3 -m venv --system-site-packages ~/venv
+# This extra is only for environments that can actually build/find an lgpio wheel.
+lgpio = ["lgpio>=0.2"]
 camera = ["picamera2>=0.3"]
 dev = ["pytest>=7.0", "ruff>=0.4"]
 
